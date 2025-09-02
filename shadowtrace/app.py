@@ -22,11 +22,14 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "20"))  # full cycle duration
 SCAN_WINDOW = int(os.getenv("SCAN_WINDOW_SECONDS", "8"))  # discovery window per cycle
+SCAN_TRANSPORT = os.getenv("SCAN_TRANSPORT", "auto").lower()  # auto|le|bredr
 GONE_AFTER = int(os.getenv("GONE_AFTER_SECONDS", "60"))  # if unseen for this time => LOST
 
 STATE_FILE = os.getenv("STATE_FILE", os.path.expanduser("~/.shadowtrace_state.json"))
 NAME_WHITELIST = [s.strip() for s in os.getenv("NAME_WHITELIST", "").split(",") if s.strip()]
 IGNORE_MACS = {s.strip().upper() for s in os.getenv("IGNORE_MACS", "").split(",") if s.strip()}
+
+DEBUG = os.getenv("DEBUG", "0").strip() not in ("", "0", "false", "False")
 
 _running = True
 state: Dict[str, Any] = {}  # mac -> {...}
@@ -117,6 +120,11 @@ def fmt_device_line(name: str, mac: str, dtype: str, rssi) -> str:
     return f"{name or 'unknown'} [{mac}] ({dtype}){rssi_txt}"
 
 
+def debug(*args, **kwargs) -> None:
+    if DEBUG:
+        print("[DEBUG]", *args, **kwargs)
+
+
 # ---------- BlueZ helpers (with casts to Any to silence type checkers) ----------
 def _val(x, default=None):
     """Unwrap dbus_next Variant to plain value."""
@@ -168,7 +176,7 @@ async def scan_once(bus: MessageBus, adapter_path: str):
     try:
         await adapter.call_set_discovery_filter(
             {
-                "Transport": Variant("s", "auto"),
+                "Transport": Variant("s", SCAN_TRANSPORT),
                 "DuplicateData": Variant("b", True),
             }
         )
@@ -185,6 +193,7 @@ async def scan_once(bus: MessageBus, adapter_path: str):
     objects = await get_managed_objects(bus)
     seen_now: Dict[str, Dict[str, Any]] = {}
 
+    debug("Managed objects:", len(objects))
     for _path, ifaces in objects.items():
         dev = ifaces.get("org.bluez.Device1")
         if not dev:
@@ -194,10 +203,12 @@ async def scan_once(bus: MessageBus, adapter_path: str):
             continue
         mac = str(mac).upper()
         if mac in IGNORE_MACS:
+            debug(mac, "ignored by IGNORE_MACS")
             continue
 
         name = _val(dev.get("Name")) or _val(dev.get("Alias")) or ""
         if not match_whitelist(name):
+            debug(mac, "filtered by NAME_WHITELIST; name=", repr(name))
             continue
 
         rssi = _val(dev.get("RSSI")) if "RSSI" in dev else None
@@ -210,6 +221,7 @@ async def scan_once(bus: MessageBus, adapter_path: str):
                 "rssi": rssi,
                 "type": dtype,
             }
+            debug("seen:", fmt_device_line(name, mac, dtype, rssi), "connected=", connected)
 
     return seen_now
 
