@@ -239,6 +239,15 @@ async def scan_once(bus: MessageBus, adapter_path: str):
                 "type": dtype,
             }
             debug("seen:", fmt_device_line(name, mac, dtype, rssi), "connected=", connected)
+        else:
+            dtype = infer_type(dev)
+            uuids = _val(dev.get("UUIDs")) if "UUIDs" in dev else None
+            debug(
+                "skipped (no RSSI, not connected):",
+                fmt_device_line(name, mac, dtype, rssi),
+                "uuids=",
+                uuids,
+            )
 
     return seen_now
 
