@@ -118,6 +118,12 @@ def fmt_device_line(name: str, mac: str, dtype: str, rssi) -> str:
 
 
 # ---------- BlueZ helpers (with casts to Any to silence type checkers) ----------
+def _val(x, default=None):
+    """Unwrap dbus_next Variant to plain value."""
+    if isinstance(x, Variant):
+        return x.value
+    return x if x is not None else default
+
 async def _get_interface_any(bus: MessageBus, service: str, path: str, interface: str) -> Any:
     """Return a D-Bus interface cast to Any so dynamic call_* methods don't upset static type checkers."""
     intros = await bus.introspect(service, path)
@@ -183,19 +189,19 @@ async def scan_once(bus: MessageBus, adapter_path: str):
         dev = ifaces.get("org.bluez.Device1")
         if not dev:
             continue
-        mac = dev.get("Address")
+        mac = _val(dev.get("Address"))
         if not mac:
             continue
-        mac = mac.upper()
+        mac = str(mac).upper()
         if mac in IGNORE_MACS:
             continue
 
-        name = dev.get("Name") or dev.get("Alias") or ""
+        name = _val(dev.get("Name")) or _val(dev.get("Alias")) or ""
         if not match_whitelist(name):
             continue
 
-        rssi = dev.get("RSSI") if "RSSI" in dev else None
-        connected = bool(dev.get("Connected", False))
+        rssi = _val(dev.get("RSSI")) if "RSSI" in dev else None
+        connected = bool(_val(dev.get("Connected", False)))
         # Consider "seen" if it reports RSSI in this window or is currently connected
         if (rssi is not None) or connected:
             dtype = infer_type(dev)
