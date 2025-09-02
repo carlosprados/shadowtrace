@@ -51,11 +51,15 @@ uv run shadowtrace
 - `make run`: run the app (`uv run python main.py`)
 - `make test`: run tests (`uv run pytest`)
 - `make add PKG=x`: add a dependency (records in `pyproject.toml`)
+- `make format`: format code with Ruff (`uv run ruff format .`)
+- `make lint`: lint with Ruff (`uv run ruff check .`)
+- `make lint-fix`: lint with auto-fix (`uv run ruff check --fix .`)
 - `make service-install`: install + enable the user systemd unit
 - `make service-restart`: restart the user unit
 - `make service-uninstall`: disable and remove the unit
 - `make service-status`: show the unit status
 - `make service-logs`: show the last 200 log lines
+- `make service-logs-follow`: follow unit logs in real time
 
 ## Configuration (env vars)
 - `NAME_WHITELIST`: comma-separated substrings to include (optional)
