@@ -11,6 +11,7 @@ from dbus_next.signature import Variant
 from dotenv import load_dotenv
 import requests
 from asyncio.subprocess import DEVNULL, PIPE
+import ipaddress
 
 # ---------- Configuration ----------
 load_dotenv()
@@ -33,6 +34,11 @@ IGNORE_MACS = {s.strip().upper() for s in os.getenv("IGNORE_MACS", "").split(","
 DEBUG = os.getenv("DEBUG", "0").strip() not in ("", "0", "false", "False")
 CONTINUOUS_DISCOVERY = os.getenv("CONTINUOUS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
 MDNS_DISCOVERY = os.getenv("MDNS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
+ARP_DISCOVERY = os.getenv("ARP_DISCOVERY", "0").strip() not in ("", "0", "false", "False")
+ARP_SUBNETS = [s.strip() for s in os.getenv("ARP_SUBNETS", "").split(",") if s.strip()]
+ARP_SWEEP = os.getenv("ARP_SWEEP", "0").strip() not in ("", "0", "false", "False")
+ARP_SWEEP_LIMIT = int(os.getenv("ARP_SWEEP_LIMIT", "256"))
+ARP_TIMEOUT_MS = int(os.getenv("ARP_TIMEOUT_MS", "500"))
 
 # Wi‑Fi presence config: comma-separated entries. Each entry can be "name@host" or just "host".
 _WIFI_HOSTS_RAW = [s.strip() for s in os.getenv("WIFI_HOSTS", "").split(",") if s.strip()]
@@ -230,6 +236,88 @@ async def mdns_scan_once(timeout: float = 5.0) -> dict:
     return seen
 
 
+# ---------- ARP/neighbour discovery (no prior IPs required) ----------
+async def _ip_json(cmd: list[str]) -> Any:
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=PIPE, stderr=DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        if not out:
+            return None
+        return json.loads(out.decode())
+    except Exception as e:
+        debug("ip json failed:", cmd, e)
+        return None
+
+
+async def _auto_local_subnets() -> list[str]:
+    routes = await _ip_json(["ip", "-j", "route", "show", "scope", "link"])
+    subnets: list[str] = []
+    if isinstance(routes, list):
+        for r in routes:
+            dst = r.get("dst")
+            if dst and "/" in dst and dst != "default":
+                # Filter out very large or host routes
+                try:
+                    net = ipaddress.ip_network(dst, strict=False)
+                    if net.version == 4 and 16 <= net.prefixlen <= 30:
+                        subnets.append(dst)
+                except Exception:
+                    continue
+    return subnets
+
+
+async def _arp_table() -> list[dict]:
+    neigh = await _ip_json(["ip", "-j", "neigh"])
+    return neigh if isinstance(neigh, list) else []
+
+
+async def _arp_sweep(subnets: list[str], limit: int, timeout_ms: int) -> None:
+    # Fire off a limited number of pings to populate neighbour table
+    ips: list[str] = []
+    for cidr in subnets:
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+            for ip in net.hosts():
+                ips.append(str(ip))
+                if len(ips) >= limit:
+                    break
+        except Exception:
+            continue
+        if len(ips) >= limit:
+            break
+    if not ips:
+        return
+    sem = asyncio.Semaphore(64)
+
+    async def ping_limited(ip: str):
+        async with sem:
+            return await _ping_host(ip, count=1, timeout=max(1, timeout_ms // 1000))
+
+    await asyncio.gather(*[ping_limited(ip) for ip in ips], return_exceptions=True)
+
+
+async def arp_scan_once() -> dict:
+    seen: Dict[str, Dict[str, Any]] = {}
+    if not ARP_DISCOVERY:
+        return seen
+    subnets = ARP_SUBNETS or await _auto_local_subnets()
+    if ARP_SWEEP and subnets:
+        await _arp_sweep(subnets, ARP_SWEEP_LIMIT, ARP_TIMEOUT_MS)
+    neigh = await _arp_table()
+    for n in neigh:
+        ip = n.get("dst") or n.get("to") or n.get("ip")
+        mac = (n.get("lladdr") or "").upper()
+        state = (n.get("state") or "").upper()
+        if not ip or not mac:
+            continue
+        if state in {"FAILED", "INCOMPLETE"}:
+            continue
+        key = f"arp:{mac}"
+        seen[key] = {"name": ip, "rssi": None, "type": "ARP"}
+        debug("arp seen:", ip, mac, state, n.get("dev"))
+    return seen
+
+
 # ---------- BlueZ helpers (with casts to Any to silence type checkers) ----------
 def _val(x, default=None):
     """Unwrap dbus_next Variant to plain value."""
@@ -388,6 +476,8 @@ async def main():
         # Merge BLE and optional Wi‑Fi presence
         wifi_now = await wifi_scan_once()
         seen_now.update(wifi_now)
+        arp_now = await arp_scan_once()
+        seen_now.update(arp_now)
 
         changed = False
         now = now_utc()

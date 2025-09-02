@@ -73,6 +73,11 @@ Note: Press Ctrl+C to stop.
 - `STATE_FILE` (default `~/.shadowtrace_state.json`)
 - `WIFI_HOSTS`: optional fallback presence by ICMP (e.g., `iphone@192.168.1.23,watch@watch.local,tablet.local`)
 - `MDNS_DISCOVERY`: enable mDNS/Bonjour discovery without knowing IPs (requires `avahi-browse`)
+- `ARP_DISCOVERY`: detect devices from ARP/neighbour table (no prior IPs)
+- `ARP_SUBNETS`: optional CIDR list to sweep (e.g., `192.168.1.0/24,10.0.0.0/24`); auto-detected if empty
+- `ARP_SWEEP`: ping sweep subnets to populate neighbour entries (off by default)
+- `ARP_SWEEP_LIMIT`: cap the number of hosts to ping per cycle (default 256)
+- `ARP_TIMEOUT_MS`: timeout per ping (default 500)
 
 Troubleshooting tips
 - If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15` and keep discovery on: `CONTINUOUS_DISCOVERY=1`.
@@ -80,3 +85,4 @@ Troubleshooting tips
 - Clear `NAME_WHITELIST` or ensure it matches the device names. Enable debug logging with `DEBUG=1` to see filter reasons.
 - For phones that rarely advertise, add a `WIFI_HOSTS` entry and ensure the device responds to ICMP ping.
 - Enable mDNS discovery (`MDNS_DISCOVERY=1`) to detect devices announcing Bonjour services (e.g., iPhones) without prior IP knowledge.
+- Enable ARP discovery: `ARP_DISCOVERY=1` (optionally with `ARP_SWEEP=1` and `ARP_SUBNETS` to be more aggressive). This can detect phones present on your LAN even if they don’t advertise BLE.
