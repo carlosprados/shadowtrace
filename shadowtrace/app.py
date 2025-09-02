@@ -10,8 +10,7 @@ from dbus_next.constants import BusType
 from dbus_next.signature import Variant
 from dotenv import load_dotenv
 import requests
-import shlex
-from asyncio.subprocess import DEVNULL
+from asyncio.subprocess import DEVNULL, PIPE
 
 # ---------- Configuration ----------
 load_dotenv()
@@ -33,6 +32,7 @@ IGNORE_MACS = {s.strip().upper() for s in os.getenv("IGNORE_MACS", "").split(","
 
 DEBUG = os.getenv("DEBUG", "0").strip() not in ("", "0", "false", "False")
 CONTINUOUS_DISCOVERY = os.getenv("CONTINUOUS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
+MDNS_DISCOVERY = os.getenv("MDNS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
 
 # Wi‑Fi presence config: comma-separated entries. Each entry can be "name@host" or just "host".
 _WIFI_HOSTS_RAW = [s.strip() for s in os.getenv("WIFI_HOSTS", "").split(",") if s.strip()]
@@ -166,7 +166,8 @@ async def wifi_scan_once() -> dict:
     """
     seen: Dict[str, Dict[str, Any]] = {}
     if not WIFI_HOSTS:
-        return seen
+        # fall through: still allow mDNS discovery below
+        pass
     tasks = []
     for entry in WIFI_HOSTS:
         host = entry["host"]
@@ -184,6 +185,48 @@ async def wifi_scan_once() -> dict:
             debug("wifi seen:", f"{name} [{host}] (WiFi)")
         else:
             debug("wifi not reachable:", host)
+    # Optional mDNS browse via avahi-browse (no prior IPs required)
+    if MDNS_DISCOVERY:
+        mdns = await mdns_scan_once()
+        seen.update(mdns)
+    return seen
+
+
+async def mdns_scan_once(timeout: float = 5.0) -> dict:
+    """Discover local devices announcing mDNS/Bonjour services using avahi-browse.
+    Returns mapping key -> info dict (type: mDNS). Requires avahi-utils.
+    """
+    cmd = ["avahi-browse", "-artp", "-t"]
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=PIPE, stderr=DEVNULL)
+    except FileNotFoundError:
+        debug("mdns: avahi-browse not found; skipping")
+        return {}
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        debug("mdns: browse timeout")
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return {}
+    if not out:
+        return {}
+    seen: Dict[str, Dict[str, Any]] = {}
+    for line in out.decode(errors="ignore").splitlines():
+        if not line or line[0] not in "+=":
+            continue
+        parts = line.split(";")
+        # event;ifindex;proto;name;type;domain;host;address;port;txt
+        if len(parts) < 9:
+            continue
+        name = parts[3]
+        host = parts[6]
+        address = parts[7]
+        key = f"mdns:{host or name}"
+        seen[key] = {"name": name or host, "rssi": None, "type": "mDNS"}
+        debug("mdns seen:", name, host, address)
     return seen
 
 

@@ -12,7 +12,7 @@ No native builds; works on Ubuntu and Raspberry Pi OS. Sends Telegram alerts whe
 ## Requirements (Ubuntu / Raspberry Pi OS)
 ```bash
 sudo apt update
-sudo apt install -y bluez dbus python3-venv libglib2.0-bin
+sudo apt install -y bluez dbus python3-venv libglib2.0-bin avahi-utils
 sudo usermod -aG bluetooth "$USER"  # re-login after adding
 ```
 Install uv (package/deb, or via script):
@@ -72,9 +72,11 @@ Note: Press Ctrl+C to stop.
 - `GONE_AFTER_SECONDS` (default 60)
 - `STATE_FILE` (default `~/.shadowtrace_state.json`)
 - `WIFI_HOSTS`: optional fallback presence by ICMP (e.g., `iphone@192.168.1.23,watch@watch.local,tablet.local`)
+- `MDNS_DISCOVERY`: enable mDNS/Bonjour discovery without knowing IPs (requires `avahi-browse`)
 
 Troubleshooting tips
 - If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15` and keep discovery on: `CONTINUOUS_DISCOVERY=1`.
 - Force LE scan: set `SCAN_TRANSPORT=le`.
 - Clear `NAME_WHITELIST` or ensure it matches the device names. Enable debug logging with `DEBUG=1` to see filter reasons.
 - For phones that rarely advertise, add a `WIFI_HOSTS` entry and ensure the device responds to ICMP ping.
+- Enable mDNS discovery (`MDNS_DISCOVERY=1`) to detect devices announcing Bonjour services (e.g., iPhones) without prior IP knowledge.
