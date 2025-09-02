@@ -1,0 +1,19 @@
+[Unit]
+Description=ShadowTrace (Bluetooth proximity watcher via BlueZ D-Bus -> Telegram)
+After=bluetooth.service dbus.service network-online.target
+Documentation=https://github.com/carlosprados/shadowtrace
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/shadowtrace.env
+# Adjust WorkingDirectory to the project location
+WorkingDirectory=%h/shadowtrace
+ExecStart=%h/shadowtrace/.venv/bin/shadowtrace
+Restart=always
+RestartSec=5
+# If your user is in the 'bluetooth' group this is not needed; otherwise uncomment:
+# SupplementaryGroups=bluetooth
+
+[Install]
+WantedBy=default.target
