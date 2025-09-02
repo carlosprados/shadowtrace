@@ -68,10 +68,11 @@ Note: Press Ctrl+C to stop.
 - `IGNORE_MACS`: comma-separated MACs to ignore (AA:BB:CC:DD:EE:FF)
 - `SCAN_INTERVAL_SECONDS` (default 20), `SCAN_WINDOW_SECONDS` (default 8)
 - `SCAN_TRANSPORT`: `auto` (default), `le`, or `bredr`
+- `CONTINUOUS_DISCOVERY`: keep scanning between cycles (default 1)
 - `GONE_AFTER_SECONDS` (default 60)
 - `STATE_FILE` (default `~/.shadowtrace_state.json`)
 
 Troubleshooting tips
-- If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15`.
+- If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15` and keep discovery on: `CONTINUOUS_DISCOVERY=1`.
 - Force LE scan: set `SCAN_TRANSPORT=le`.
 - Clear `NAME_WHITELIST` or ensure it matches the device names. Enable debug logging with `DEBUG=1` to see filter reasons.

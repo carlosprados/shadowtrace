@@ -30,6 +30,7 @@ NAME_WHITELIST = [s.strip() for s in os.getenv("NAME_WHITELIST", "").split(",") 
 IGNORE_MACS = {s.strip().upper() for s in os.getenv("IGNORE_MACS", "").split(",") if s.strip()}
 
 DEBUG = os.getenv("DEBUG", "0").strip() not in ("", "0", "false", "False")
+CONTINUOUS_DISCOVERY = os.getenv("CONTINUOUS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
 
 _running = True
 state: Dict[str, Any] = {}  # mac -> {...}
@@ -168,6 +169,14 @@ async def ensure_powered(bus: MessageBus, adapter_path: str):
         await props.call_set("org.bluez.Adapter1", "Powered", Variant("b", True))
 
 
+async def is_discovering(bus: MessageBus, adapter_path: str) -> bool:
+    _adapter, props = await get_adapter_ifaces(bus, adapter_path)
+    discovering = await props.call_get("org.bluez.Adapter1", "Discovering")
+    if isinstance(discovering, Variant):
+        discovering = discovering.value
+    return bool(discovering)
+
+
 async def scan_once(bus: MessageBus, adapter_path: str):
     """Perform one discovery window and return devices seen in this window."""
     adapter, _props = await get_adapter_ifaces(bus, adapter_path)
@@ -181,14 +190,22 @@ async def scan_once(bus: MessageBus, adapter_path: str):
             }
         )
     except Exception as e:
-        # Some BlueZ builds may not support this call or option
         print("[WARN] SetDiscoveryFilter failed:", e)
 
-    await adapter.call_start_discovery()
-    try:
+    if CONTINUOUS_DISCOVERY:
+        # Ensure discovery is on; don't stop it to avoid missing sparse beacons
+        try:
+            if not await is_discovering(bus, adapter_path):
+                await adapter.call_start_discovery()
+        except Exception as e:
+            debug("start_discovery (continuous) failed:", e)
         await asyncio.sleep(SCAN_WINDOW)
-    finally:
-        await adapter.call_stop_discovery()
+    else:
+        await adapter.call_start_discovery()
+        try:
+            await asyncio.sleep(SCAN_WINDOW)
+        finally:
+            await adapter.call_stop_discovery()
 
     objects = await get_managed_objects(bus)
     seen_now: Dict[str, Dict[str, Any]] = {}
