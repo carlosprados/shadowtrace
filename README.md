@@ -71,8 +71,10 @@ Note: Press Ctrl+C to stop.
 - `CONTINUOUS_DISCOVERY`: keep scanning between cycles (default 1)
 - `GONE_AFTER_SECONDS` (default 60)
 - `STATE_FILE` (default `~/.shadowtrace_state.json`)
+- `WIFI_HOSTS`: optional fallback presence by ICMP (e.g., `iphone@192.168.1.23,watch@watch.local,tablet.local`)
 
 Troubleshooting tips
 - If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15` and keep discovery on: `CONTINUOUS_DISCOVERY=1`.
 - Force LE scan: set `SCAN_TRANSPORT=le`.
 - Clear `NAME_WHITELIST` or ensure it matches the device names. Enable debug logging with `DEBUG=1` to see filter reasons.
+- For phones that rarely advertise, add a `WIFI_HOSTS` entry and ensure the device responds to ICMP ping.

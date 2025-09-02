@@ -10,6 +10,8 @@ from dbus_next.constants import BusType
 from dbus_next.signature import Variant
 from dotenv import load_dotenv
 import requests
+import shlex
+from asyncio.subprocess import DEVNULL
 
 # ---------- Configuration ----------
 load_dotenv()
@@ -31,6 +33,16 @@ IGNORE_MACS = {s.strip().upper() for s in os.getenv("IGNORE_MACS", "").split(","
 
 DEBUG = os.getenv("DEBUG", "0").strip() not in ("", "0", "false", "False")
 CONTINUOUS_DISCOVERY = os.getenv("CONTINUOUS_DISCOVERY", "1").strip() not in ("", "0", "false", "False")
+
+# Wi‑Fi presence config: comma-separated entries. Each entry can be "name@host" or just "host".
+_WIFI_HOSTS_RAW = [s.strip() for s in os.getenv("WIFI_HOSTS", "").split(",") if s.strip()]
+WIFI_HOSTS = []
+for entry in _WIFI_HOSTS_RAW:
+    if "@" in entry:
+        name, host = entry.split("@", 1)
+        WIFI_HOSTS.append({"name": name.strip(), "host": host.strip()})
+    else:
+        WIFI_HOSTS.append({"name": entry, "host": entry})
 
 _running = True
 state: Dict[str, Any] = {}  # mac -> {...}
@@ -124,6 +136,55 @@ def fmt_device_line(name: str, mac: str, dtype: str, rssi) -> str:
 def debug(*args, **kwargs) -> None:
     if DEBUG:
         print("[DEBUG]", *args, **kwargs)
+
+
+# ---------- Wi‑Fi presence helpers ----------
+async def _ping_host(host: str, count: int = 1, timeout: int = 1) -> bool:
+    """Return True if host responds to a single ICMP ping.
+    Uses the system ping command with a short timeout.
+    """
+    # Prefer GNU ping options; fall back to a simpler form if needed
+    cmd = ["ping", "-c", str(count), "-W", str(timeout), host]
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=DEVNULL, stderr=DEVNULL)
+        rc = await proc.wait()
+        return rc == 0
+    except Exception:
+        # Fallback without -W
+        try:
+            proc = await asyncio.create_subprocess_exec("ping", "-c", str(count), host, stdout=DEVNULL, stderr=DEVNULL)
+            rc = await proc.wait()
+            return rc == 0
+        except Exception as e:
+            debug("ping exec failed:", e)
+            return False
+
+
+async def wifi_scan_once() -> dict:
+    """Check configured WIFI_HOSTS for reachability via ICMP ping.
+    Returns mapping key -> info dict similar to BLE seen structure.
+    """
+    seen: Dict[str, Dict[str, Any]] = {}
+    if not WIFI_HOSTS:
+        return seen
+    tasks = []
+    for entry in WIFI_HOSTS:
+        host = entry["host"]
+        tasks.append(_ping_host(host))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for entry, ok in zip(WIFI_HOSTS, results):
+        host = entry["host"]
+        name = entry["name"]
+        key = f"wifi:{host}"
+        if isinstance(ok, Exception):
+            debug("wifi check error:", host, ok)
+            continue
+        if ok:
+            seen[key] = {"name": name, "rssi": None, "type": "WiFi"}
+            debug("wifi seen:", f"{name} [{host}] (WiFi)")
+        else:
+            debug("wifi not reachable:", host)
+    return seen
 
 
 # ---------- BlueZ helpers (with casts to Any to silence type checkers) ----------
@@ -280,6 +341,10 @@ async def main():
             except Exception:
                 pass
             continue
+
+        # Merge BLE and optional Wi‑Fi presence
+        wifi_now = await wifi_scan_once()
+        seen_now.update(wifi_now)
 
         changed = False
         now = now_utc()
