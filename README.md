@@ -28,6 +28,8 @@ export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
 uv run shadowtrace
 ```
 
+Note: Press Ctrl+C to stop.
+
 ## How To Use
 - Local run (CLI):
   - Copy env template: `cp .env.example .env` and fill values (or export vars in your shell).
