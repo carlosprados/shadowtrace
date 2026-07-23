@@ -2,7 +2,6 @@
 """Entrypoint for ShadowTrace; delegates to package module."""
 
 import asyncio
-import signal
 
 from shadowtrace import app
 
@@ -11,16 +10,13 @@ now_utc = app.now_utc
 find_adapter_path = app.find_adapter_path
 
 
-def _handle_stop(*_):
-    print("Termination signal received. Exiting…")
-
-
 def main() -> None:
-    signal.signal(signal.SIGINT, _handle_stop)
-    signal.signal(signal.SIGTERM, _handle_stop)
-    asyncio.run(app.main())
+    try:
+        asyncio.run(app.main())
+    except KeyboardInterrupt:
+        # Allow Ctrl+C to terminate immediately
+        print("Termination signal received. Exiting…")
 
 
 if __name__ == "__main__":
     main()
-
