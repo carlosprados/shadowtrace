@@ -1,5 +1,6 @@
 # Go build output
 /shadowtrace
+/dist/
 *.test
 
 # Python (anomaly trainer runs via `uv run` with ephemeral deps)

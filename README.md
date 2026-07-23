@@ -120,6 +120,27 @@ shadowtrace anomaly score --top 20                          # Go inference
 Python project needed. It flags the unusual (e.g. a known device at an odd hour) that
 the plain rules miss. Needs a few days of data before it is meaningful.
 
+## Raspberry Pi
+
+The binary is pure Go (no CGO), so it cross-compiles to a single static ARM
+executable with no glibc/runtime dependency — it runs on any Raspberry Pi OS.
+
+```bash
+just build-pi arm64     # Pi 3/4/5 on 64-bit Raspberry Pi OS  -> dist/shadowtrace-linux-arm64
+just build-pi armv7     # Pi 2/3/4 on 32-bit Raspberry Pi OS  -> dist/shadowtrace-linux-armv7
+just build-pi armv6     # Pi Zero / Pi 1                      -> dist/shadowtrace-linux-armv6
+just build-pi-all       # all three
+```
+
+Not sure which? On the Pi: `uname -m` → `aarch64` = arm64, `armv7l` = armv7, `armv6l` = armv6.
+
+Deploy:
+```bash
+scp dist/shadowtrace-linux-arm64 pi@raspberrypi:~/shadowtrace
+ssh pi@raspberrypi 'sudo apt install -y bluez dbus && ./shadowtrace scan'
+```
+Then set up the service as below (adjust the unit's paths).
+
 ## Run as a service
 
 ```bash

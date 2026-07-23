@@ -4,14 +4,34 @@ binary      := "shadowtrace"
 service_dir := env_var_or_default("SERVICE_DIR", home_directory() / ".config/systemd/user")
 events      := home_directory() / ".shadowtrace_events.jsonl"
 model       := home_directory() / ".shadowtrace_anomaly.json"
+version     := `git describe --tags --always --dirty 2>/dev/null || echo dev`
+ldflags     := "-s -w -X github.com/carlosprados/shadowtrace/cmd.Version=" + version
 
 # List available recipes
 default:
     @just --list
 
-# Build the self-contained binary
+# Build the self-contained binary for this host
 build:
-    go build -o {{binary}} .
+    go build -ldflags "{{ldflags}}" -o {{binary}} .
+
+# Cross-compile for a Raspberry Pi (arch: arm64 | armv7 | armv6)
+build-pi arch="arm64":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{arch}}" in
+      arm64) goarch=arm64; goarm="" ;;
+      armv7) goarch=arm;   goarm=7  ;;
+      armv6) goarch=arm;   goarm=6  ;;
+      *) echo "arch must be arm64 | armv7 | armv6"; exit 1 ;;
+    esac
+    mkdir -p dist
+    CGO_ENABLED=0 GOOS=linux GOARCH=$goarch GOARM=$goarm \
+      go build -ldflags "{{ldflags}}" -o dist/shadowtrace-linux-{{arch}} .
+    echo "built dist/shadowtrace-linux-{{arch}}"
+
+# Cross-compile all Raspberry Pi variants
+build-pi-all: (build-pi "arm64") (build-pi "armv7") (build-pi "armv6")
 
 # Install the binary into GOBIN (~/go/bin by default)
 install:
