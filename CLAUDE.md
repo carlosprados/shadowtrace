@@ -25,11 +25,11 @@ whole tool. When in doubt about behaviour, read the command's `--help` first.
 
 Tasks live in the `Justfile` (`just` to list). Go 1.26+.
 
-- `just build` — `go build -o shadowtrace .` (the binary collides in name with nothing now)
+- `just build` — build `./shadowtrace` for this host; `just build-pi [arm64|armv7|armv6]` cross-compiles for a Raspberry Pi
 - `just test` / `go test ./...` — unit tests
 - `go test ./internal/identify -run TestFingerprint` — a single test
 - `just run scan --adapter hci0` — run without building
-- `just vet`, `just fmt`
+- `just vet`, `just fmt`, `just tidy`
 - `just anomaly-train` — `uv run tools/train.py ...` (Python trainer, PEP 723 auto-deps)
 - `just service-install` / `service-restart` / `service-logs-follow` — user systemd unit
 
@@ -102,7 +102,7 @@ D-Bus and exec edges thin and untested; test the pure functions they feed.
   first-class requirement here).
 - Config: add a flag in `cmd/root.go` (flag + `BindPFlag` + `BindEnv` legacy name),
   a `Key*` const and a field in `internal/config`.
-- CI (`.github/workflows/ci.yml`) — update to Go (`go test ./...`) if still Python.
+- CI (`.github/workflows/ci.yml`) runs `go vet`, `go build` and `go test ./...` on push/PR.
 
 ## Roadmap
 

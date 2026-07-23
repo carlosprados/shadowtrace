@@ -27,8 +27,8 @@ Select with `--mode` / `MODE` (default `watch`):
 ## Requirements
 
 ```bash
-sudo apt install -y bluez dbus libglib2.0-bin avahi-utils   # avahi only for presence mDNS
-sudo usermod -aG bluetooth "$USER"                          # re-login afterwards
+sudo apt install -y bluez dbus       # + avahi-utils only if you use presence mDNS
+sudo usermod -aG bluetooth "$USER"   # re-login afterwards
 ```
 Go 1.26+ to build. `uv` (optional) for the anomaly trainer.
 

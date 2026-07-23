@@ -35,7 +35,11 @@ build-pi-all: (build-pi "arm64") (build-pi "armv7") (build-pi "armv6")
 
 # Install the binary into GOBIN (~/go/bin by default)
 install:
-    go install .
+    go install -ldflags "{{ldflags}}" .
+
+# Tidy go.mod / go.sum
+tidy:
+    go mod tidy
 
 # Run without building, e.g. `just run scan --adapter hci0`
 run *args:
