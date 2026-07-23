@@ -132,7 +132,7 @@ def send_telegram(text: str) -> None:
 
 async def notify(text: str) -> None:
     """Non-blocking alert: prints and sends to Telegram off the event loop."""
-    print(text)
+    print(text, flush=True)
     await asyncio.to_thread(send_telegram, text)
 
 

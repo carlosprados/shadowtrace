@@ -15,6 +15,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+export PYTHONUNBUFFERED=1  # stream output live even through a pipe
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     sed -n '/^# watch-test/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
