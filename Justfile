@@ -1,72 +1,74 @@
 # ShadowTrace task runner — https://github.com/casey/just
 
+binary      := "shadowtrace"
 service_dir := env_var_or_default("SERVICE_DIR", home_directory() / ".config/systemd/user")
+events      := home_directory() / ".shadowtrace_events.jsonl"
+model       := home_directory() / ".shadowtrace_anomaly.json"
 
 # List available recipes
 default:
     @just --list
 
-# Install runtime deps into .venv
-sync:
-    uv sync
+# Build the self-contained binary
+build:
+    go build -o {{binary}} .
 
-# Install runtime + dev deps (pytest, ruff)
-dev:
-    uv sync --extra dev
+# Install the binary into GOBIN (~/go/bin by default)
+install:
+    go install .
 
-# Run the test suite
+# Run without building, e.g. `just run scan --adapter hci0`
+run *args:
+    go run . {{args}}
+
+# One-shot environment scan
+scan *args:
+    go run . scan {{args}}
+
+# Run tests
 test:
-    uv run pytest
+    go test ./...
 
-# Run the app (uses MODE from env/.env; default is watch)
-run:
-    uv run python main.py
+# Static analysis
+vet:
+    go vet ./...
 
-# Quick foreground watch-mode smoke test (throwaway files, alerts to stdout)
-watch-test:
-    ./scripts/watch-test.sh
+# Format
+fmt:
+    gofmt -w .
 
-# Add a dependency, e.g. `just add requests`
-add pkg:
-    uv add {{pkg}}
+# Train the anomaly model in Python (uv auto-installs deps via PEP 723)
+anomaly-train:
+    uv run tools/train.py --events {{events}} --model {{model}}
 
-# Format code with ruff
-format:
-    uv run ruff format .
+# Score events with the trained model (Go inference)
+anomaly-score *args:
+    go run . anomaly score {{args}}
 
-# Lint with ruff
-lint:
-    uv run ruff check .
+# Force-refresh the OUI vendor database
+oui-update:
+    go run . oui update
 
-# Lint with autofix
-lint-fix:
-    uv run ruff check --fix .
-
-# Install + enable the user systemd unit
-service-install:
+# Build + install the user systemd unit (adjust paths in shadowtrace.service first)
+service-install: build
     mkdir -p {{service_dir}}
     cp shadowtrace.service {{service_dir}}/shadowtrace.service
     systemctl --user daemon-reload
     systemctl --user enable --now shadowtrace
 
-# Restart the user systemd unit
 service-restart:
     systemctl --user restart shadowtrace
 
-# Disable + remove the user systemd unit
 service-uninstall:
     -systemctl --user disable --now shadowtrace
     rm -f {{service_dir}}/shadowtrace.service
     systemctl --user daemon-reload
 
-# Show unit status
 service-status:
     systemctl --user status shadowtrace --no-pager
 
-# Show recent unit logs
 service-logs:
     journalctl --user -u shadowtrace -n 200 --no-pager
 
-# Follow unit logs
 service-logs-follow:
     journalctl --user -u shadowtrace -f

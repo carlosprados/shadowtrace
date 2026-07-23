@@ -1,145 +1,135 @@
 # ShadowTrace
 
-Bluetooth (BLE + Classic) proximity watcher for Linux using BlueZ via D-Bus.  
-No native builds; works on Ubuntu and Raspberry Pi OS. Sends Telegram alerts.
+Self-contained **Go** binary for Linux: a Bluetooth/Wi-Fi **environment intrusion
+detector** and presence watcher using BlueZ over D-Bus, with a small Python side-car
+for anomaly-model training. Sends Telegram alerts. No native builds; works on Ubuntu
+and Raspberry Pi OS.
 
 ## Modes
 
-Select with `MODE` (default `watch`):
+Select with `--mode` / `MODE` (default `watch`):
 
 - **`watch` — environment intrusion detection (default).** Scans the surrounding BLE
-  environment, learns a baseline of habitual devices, and alerts on **unknown devices with
-  strong, sustained signal** (i.e. physically near/inside), while writing a forensic event
-  log. Built to answer "is there an unrecognised device around my place, and when?".
-- **`presence` — legacy tracker.** Watches for specific devices and fires DETECTED/LOST
-  alerts, optionally fusing Wi‑Fi/mDNS/ARP. See the Presence section below.
+  environment, learns a baseline of habitual devices, and alerts on **unknown devices
+  with strong, sustained signal** (near/inside), while writing a forensic event log.
+- **`presence` — legacy tracker.** DETECTED/LOST alerts for specific devices, fusing
+  BLE with optional Wi-Fi ICMP, mDNS and ARP discovery.
 
-### What watch mode can and cannot do
-- It detects **devices that emit radio, not people**. Someone entering with their phone off
-  or in airplane mode is invisible to it. Treat it as a complementary/forensic layer, not a
-  replacement for a door sensor or camera.
-- BLE crosses walls, so you **will** pick up neighbours. The `WATCH_RSSI_MIN` threshold plus
-  the learned baseline are the only defences against that noise — expect to calibrate.
+### What it can and cannot do
+- Detects **devices that emit radio, not people**. A phone that is off or in airplane
+  mode is invisible. It is a complementary/forensic layer, not a camera or door sensor.
+- BLE crosses walls, so you **will** pick up neighbours. The `--rssi-min` threshold plus
+  the learned baseline are the defences — expect to calibrate.
 - Phones rotate their BLE MAC, so alerts say "an unknown device is near", not *who*. A
   best-effort fingerprint (name / manufacturer id / service UUIDs) groups a device across
-  MAC rotations when it exposes any of those.
+  MAC rotations; identification (vendor/kind/model) is derived passively.
 
-## Features
-- Unified BLE + Classic scanning via BlueZ/D-Bus (`Transport=auto`), adapter selectable via `BT_ADAPTER`
-- Watch mode: RSSI proximity threshold, auto-learned editable baseline, sustained-presence
-  confirmation, reinforced night hours, forensic JSONL event log, anti-spam cooldown
-- Telegram alerts (plain text), sent off the scan loop (non-blocking)
-- JSON persistence of state/baseline
-
-## Requirements (Ubuntu / Raspberry Pi OS)
-```bash
-sudo apt update
-sudo apt install -y bluez dbus python3-venv libglib2.0-bin avahi-utils
-sudo usermod -aG bluetooth "$USER"  # re-login after adding
-```
-Install uv (package/deb, or via script):
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-exec "$SHELL" -l  # reload PATH so ~/.local/bin is active
-```
-
-## Setup & Run (uv)
-```bash
-uv sync --extra dev
-export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
-uv run shadowtrace
-```
-
-Note: Press Ctrl+C to stop.
-
-## How To Use
-- Local run (CLI):
-  - Copy env template: `cp .env.example .env` and fill values (or export vars in your shell).
-  - Install deps: `uv sync` (add `--extra dev` for tests).
-  - Start: `uv run shadowtrace` or `uv run python main.py`.
-
-- As a user systemd service:
-  - Create an env file: `mkdir -p ~/.config && cp .env.example ~/.config/shadowtrace.env` and edit values.
-  - Install and enable: `just service-install`.
-  - Restart service after changes: `just service-restart`.
-  - Uninstall service: `just service-uninstall`.
-  - Alternatively (manual):
-    - `mkdir -p ~/.config/systemd/user && cp shadowtrace.service ~/.config/systemd/user/`
-    - `systemctl --user daemon-reload && systemctl --user enable --now shadowtrace`
-  - Note: if your project path is not `~/shadowtrace`, update `WorkingDirectory` in the unit before installing.
-  - Logs: `journalctl --user -u shadowtrace -f`.
-
-## Tasks (just)
-Tasks are defined in the `Justfile` (install [just](https://github.com/casey/just)). Run `just`
-with no args to list them.
-- `just sync` / `just dev`: install runtime / runtime+dev deps
-- `just run`: run the app
-- `just test`: run tests
-- `just watch-test`: quick foreground watch-mode smoke test
-- `just add <pkg>`: add a dependency (e.g. `just add requests`)
-- `just format` / `just lint` / `just lint-fix`: ruff format / check / autofix
-- `just service-install` / `service-restart` / `service-uninstall` / `service-status`: manage the unit
-- `just service-logs` / `service-logs-follow`: show / follow unit logs
-
-## Watch mode configuration (env vars)
-- `MODE`: `watch` (default) or `presence`
-- `BT_ADAPTER`: preferred Bluetooth adapter (e.g. `hci1`); empty = first available
-- `WATCH_RSSI_MIN` (default −70): minimum RSSI to count as "near/inside" (weaker = farther)
-- `WATCH_RSSI_MIN_NIGHT`: threshold used during `ALERT_HOURS` (defaults to `WATCH_RSSI_MIN`)
-- `WATCH_CONFIRM_HITS` (default 2): consecutive strong windows before a device counts as present
-- `WATCH_GONE_AFTER_SECONDS` (default 120): grace before a present device is marked gone
-- `WATCH_LEARN_SECONDS` (default 86400): learning window that populates the baseline
-- `ALERT_COOLDOWN_SECONDS` (default 600): min seconds between repeated alerts for one device
-- `ALERT_HOURS`: reinforced hours `start-end` (24h local), e.g. `0-7`; empty = disabled
-- `HOME_MACS`: comma-separated MACs always treated as known (fixed-MAC devices)
-- `BASELINE_FILE` (default `~/.shadowtrace_baseline.json`): learned, hand-editable allowlist
-- `EVENT_LOG` (default `~/.shadowtrace_events.jsonl`): forensic log (one JSON object per line)
-
-### Quick test
-
-Use the helper script (writes throwaway files under `/tmp`, alerts to stdout):
+## Requirements
 
 ```bash
-just watch-test               # learns 5s, then alerts on nearby devices; Ctrl+C to stop
-# or with overrides:
-BT_ADAPTER=hci0 WATCH_LEARN_SECONDS=60 ./scripts/watch-test.sh
+sudo apt install -y bluez dbus libglib2.0-bin avahi-utils   # avahi only for presence mDNS
+sudo usermod -aG bluetooth "$USER"                          # re-login afterwards
+```
+Go 1.26+ to build. `uv` (optional) for the anomaly trainer.
+
+## Build & run
+
+```bash
+just build            # or: go build -o shadowtrace .
+./shadowtrace help    # discover everything
+
+./shadowtrace scan --adapter hci0        # one-shot look at what's around
+./shadowtrace watch --adapter hci1       # run the IDS loop (Ctrl+C to stop)
 ```
 
-Every knob is overridable from the environment; run `./scripts/watch-test.sh -h` for the header.
+The CLI is fully self-documenting — every command has `--help` with an example:
+
+```
+shadowtrace
+  scan       Run one scan window and print what's around right now
+  watch      Run the environment intrusion-detection loop
+  presence   Run the legacy presence tracker (DETECTED/LOST)
+  baseline   list | show <fp> | forget <fp>
+  events     tail | stats
+  anomaly    score | train
+  oui        update | info | lookup <mac>
+  version
+```
+
+## Configuration
+
+Flags, environment variables (legacy names, honoured by the systemd unit via
+`~/.config/shadowtrace.env`) or defaults — in that precedence. Key ones:
+
+| Flag | Env | Default | Meaning |
+|------|-----|---------|---------|
+| `--mode` | `MODE` | `watch` | `watch` or `presence` |
+| `--adapter` | `BT_ADAPTER` | first | Bluetooth adapter, e.g. `hci1` |
+| `--rssi-min` | `WATCH_RSSI_MIN` | `-70` | min RSSI to count as near |
+| `--rssi-min-night` | `WATCH_RSSI_MIN_NIGHT` | =rssi-min | threshold during `--alert-hours` |
+| `--confirm-hits` | `WATCH_CONFIRM_HITS` | `2` | strong windows before "present" |
+| `--gone-after` | `WATCH_GONE_AFTER_SECONDS` | `120` | grace before "gone" |
+| `--learn-seconds` | `WATCH_LEARN_SECONDS` | `86400` | learning window |
+| `--alert-cooldown` | `ALERT_COOLDOWN_SECONDS` | `600` | min seconds between repeat alerts |
+| `--alert-hours` | `ALERT_HOURS` | — | reinforced hours, e.g. `0-7` |
+| `--home-macs` | `HOME_MACS` | — | MACs always known |
+| `--baseline-file` | `BASELINE_FILE` | `~/.shadowtrace_baseline.json` | learned allowlist |
+| `--event-log` | `EVENT_LOG` | `~/.shadowtrace_events.jsonl` | forensic log (JSONL) |
+| `--window` / `--interval` | `SCAN_WINDOW_SECONDS` / `SCAN_INTERVAL_SECONDS` | `8` / `20` | scan timing |
+| `--oui-file` | `OUI_FILE` | `~/.shadowtrace_oui.tsv` | vendor database cache |
+| `--oui-url` | `OUI_URL` | Wireshark manuf | where to download it |
+| `--oui-max-age-days` | `OUI_MAX_AGE_DAYS` | `30` | auto-refresh when older (0 = never) |
+| `--oui-auto` | `OUI_AUTO_UPDATE` | `true` | auto-download when missing/stale |
+
+Run `./shadowtrace watch --help` (and `presence --help`) for the full list, including
+the presence-only Wi-Fi/mDNS/ARP flags. Telegram: set `TELEGRAM_BOT_TOKEN` /
+`TELEGRAM_CHAT_ID` (empty = alerts print to stdout).
+
+### Vendor database (OUI)
+Devices with a public MAC are labelled with their hardware vendor from a locally
+cached OUI database (Wireshark's `manuf`, ~40k prefixes). It downloads on first use
+and auto-refreshes when older than `--oui-max-age-days`. Force a refresh anytime:
+
+```bash
+shadowtrace oui update        # download now
+shadowtrace oui info          # cache path, age, prefix count
+shadowtrace oui lookup F8:AB:E5:91:56:87
+```
 
 ### Calibrating watch mode
-1. Run it for `WATCH_LEARN_SECONDS` (default 24h) so it learns everything habitual as known.
-   Nothing alerts during learning; devices are added to `BASELINE_FILE`.
-2. After learning, edit `BASELINE_FILE` to drop anything you don't want treated as known
-   (a recurring neighbour, say). It's plain JSON keyed by fingerprint.
-3. Tune `WATCH_RSSI_MIN` toward 0 (e.g. −60) if you get neighbour noise, or more negative
-   (e.g. −80) if you miss devices you know are inside. Review `EVENT_LOG` to see RSSI ranges.
-4. Optionally set `ALERT_HOURS` (e.g. `0-7`) with a more permissive `WATCH_RSSI_MIN_NIGHT`
-   so an empty house is watched more aggressively at night.
+1. Let it learn for `--learn-seconds` (default 24h) in place; nothing alerts, devices
+   fill `--baseline-file`.
+2. Prune it: `shadowtrace baseline list`, then `baseline forget <fp>` for anything that
+   shouldn't be known (a recurring neighbour). The file is plain, hand-editable JSON.
+3. Tune `--rssi-min` toward 0 (e.g. `-60`) for neighbour noise, or more negative for
+   missed inside devices. Inspect ranges with `shadowtrace events tail` / `events stats`.
+4. Optionally set `--alert-hours 0-7` with a more permissive `--rssi-min-night`.
 
-Roadmap: Wi‑Fi monitor-mode sniffing (probe requests) to detect nearby phones not on your
-network — requires a monitor-capable USB Wi‑Fi adapter; not yet implemented.
+## Anomaly detection (hybrid: Python trains, Go infers)
 
-## Presence mode configuration (env vars)
-- `NAME_WHITELIST`: comma-separated substrings to include (optional)
-- `IGNORE_MACS`: comma-separated MACs to ignore (AA:BB:CC:DD:EE:FF)
-- `SCAN_INTERVAL_SECONDS` (default 20), `SCAN_WINDOW_SECONDS` (default 8)
-- `SCAN_TRANSPORT`: `auto` (default), `le`, or `bredr`
-- `CONTINUOUS_DISCOVERY`: keep scanning between cycles (default 1)
-- `GONE_AFTER_SECONDS` (default 60)
-- `STATE_FILE` (default `~/.shadowtrace_state.json`)
-- `WIFI_HOSTS`: optional fallback presence by ICMP (e.g., `iphone@192.168.1.23,watch@watch.local,tablet.local`)
-- `MDNS_DISCOVERY`: enable mDNS/Bonjour discovery without knowing IPs (requires `avahi-browse`)
-- `ARP_DISCOVERY`: detect devices from ARP/neighbour table (no prior IPs)
-- `ARP_SUBNETS`: optional CIDR list to sweep (e.g., `192.168.1.0/24,10.0.0.0/24`); auto-detected if empty
-- `ARP_SWEEP`: ping sweep subnets to populate neighbour entries (off by default)
-- `ARP_SWEEP_LIMIT`: cap the number of hosts to ping per cycle (default 256)
-- `ARP_TIMEOUT_MS`: timeout per ping (default 500)
+The event log is the training dataset. Training runs in Python (scikit-learn
+IsolationForest) and exports a JSON model; scoring is Go inference.
 
-Troubleshooting tips
-- If some BLE devices (e.g., phone/watch) are missed, try a longer window: `SCAN_WINDOW_SECONDS=15` and keep discovery on: `CONTINUOUS_DISCOVERY=1`.
-- Force LE scan: set `SCAN_TRANSPORT=le`.
-- Clear `NAME_WHITELIST` or ensure it matches the device names. Enable debug logging with `DEBUG=1` to see filter reasons.
-- For phones that rarely advertise, add a `WIFI_HOSTS` entry and ensure the device responds to ICMP ping.
-- Enable mDNS discovery (`MDNS_DISCOVERY=1`) to detect devices announcing Bonjour services (e.g., iPhones) without prior IP knowledge.
-- Enable ARP discovery: `ARP_DISCOVERY=1` (optionally with `ARP_SWEEP=1` and `ARP_SUBNETS` to be more aggressive). This can detect phones present on your LAN even if they don’t advertise BLE.
+```bash
+uv run tools/train.py --events ~/.shadowtrace_events.jsonl \
+                      --model ~/.shadowtrace_anomaly.json   # or: just anomaly-train
+shadowtrace anomaly score --top 20                          # Go inference
+```
+
+`uv run` auto-installs scikit-learn/numpy from the trainer's PEP 723 header — no
+Python project needed. It flags the unusual (e.g. a known device at an odd hour) that
+the plain rules miss. Needs a few days of data before it is meaningful.
+
+## Run as a service
+
+```bash
+mkdir -p ~/.config && cp .env.example ~/.config/shadowtrace.env   # edit: TELEGRAM_*, BT_ADAPTER, ...
+# Adjust WorkingDirectory/ExecStart paths in shadowtrace.service to your checkout, then:
+just service-install
+just service-logs-follow
+```
+
+## Roadmap
+- Wi-Fi monitor-mode sniffing (probe requests) to detect nearby phones not on your
+  network — requires a monitor-capable USB Wi-Fi adapter.
+- Optional active GATT enrichment (Device Information Service) for fixed-MAC devices.

@@ -4,107 +4,108 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-ShadowTrace is a Linux Bluetooth watcher with two modes (`MODE` env var):
+ShadowTrace is a self-contained **Go** binary: a Bluetooth/Wi-Fi environment
+intrusion detector and presence watcher, with a small Python side-car for ML
+training. Two modes, selected by `--mode` / `MODE`:
 
-- **`watch` (default) — environment intrusion detection.** Scans the surrounding BLE
-  environment, learns a baseline of habitual devices, and alerts (Telegram) on **unknown
-  devices with strong, sustained signal** — i.e. physically near/inside — while writing a
-  forensic event log. Answers "is there an unrecognised device around my place, and when?".
-- **`presence` — legacy tracker.** Watches for devices and fires DETECTED/LOST alerts,
-  fusing BLE with optional Wi-Fi ICMP, mDNS (avahi-browse) and ARP neighbour discovery.
+- **watch (default)** — scans the surrounding BLE environment, learns a baseline of
+  habitual devices, and alerts (Telegram) on unknown devices with strong, sustained
+  signal (near/inside), writing a forensic event log that doubles as the ML dataset.
+- **presence** — legacy tracker firing DETECTED/LOST, fusing BLE with optional
+  Wi-Fi ICMP, mDNS (avahi-browse) and ARP discovery.
 
-Pure-Python, no native builds; targets Ubuntu and Raspberry Pi OS. Detects devices that
-emit radio, not people — a phone that's off/airplane-mode is invisible; treat it as a
-complementary/forensic layer, not a replacement for a camera or door sensor.
+It detects devices that emit radio, not people (a phone that is off/airplane is
+invisible). Complementary/forensic layer, not a camera replacement.
 
-## Commands
+The CLI is built with **Cobra + Viper** and is fully self-documenting: every command
+has a Long description and an Example, so `shadowtrace help` and `--help` teach the
+whole tool. When in doubt about behaviour, read the command's `--help` first.
 
-Uses `uv` for everything; common tasks are wrapped in the `Justfile` (run `just` for the list).
-The dev deps live in `[project.optional-dependencies]`, so installing them is `--extra dev`.
+## Commands (development)
 
-- `uv sync --extra dev` / `just dev` — install runtime + dev deps (pytest, ruff)
-- `uv run pytest` / `just test` — run the suite
-- `uv run pytest tests/test_watch.py::test_fingerprint_survives_mac_rotation` — single test
-- `just watch-test` / `./scripts/watch-test.sh` — quick foreground watch-mode smoke test
-  (short learn window, throwaway `/tmp` files, alerts to stdout). All knobs overridable via env.
-- `uv run python main.py` / `just run` / `uv run shadowtrace` — run the loop (Ctrl+C to stop)
-- `just lint` / `just lint-fix` / `just format` — ruff
+Tasks live in the `Justfile` (`just` to list). Go 1.26+.
+
+- `just build` — `go build -o shadowtrace .` (the binary collides in name with nothing now)
+- `just test` / `go test ./...` — unit tests
+- `go test ./internal/identify -run TestFingerprint` — a single test
+- `just run scan --adapter hci0` — run without building
+- `just vet`, `just fmt`
+- `just anomaly-train` — `uv run tools/train.py ...` (Python trainer, PEP 723 auto-deps)
 - `just service-install` / `service-restart` / `service-logs-follow` — user systemd unit
 
-Runtime requires Linux with BlueZ, a Bluetooth adapter, and system D-Bus. `presence` mode's
-mDNS needs `avahi-utils`; Wi-Fi/ARP need `ip` and `ping`. Select the adapter with `BT_ADAPTER`
-(e.g. `hci1`).
+Runtime needs Linux with BlueZ + a Bluetooth adapter + system D-Bus. Select the
+adapter with `--adapter` / `BT_ADAPTER` (e.g. hci1). Presence mDNS needs
+`avahi-browse`; Wi-Fi/ARP need `ip`/`ping`.
 
 ## Architecture
 
-Essentially all logic lives in **`shadowtrace/app.py`**. `main.py` is a thin entrypoint that
-calls `app.main()` and re-exports `now_utc`/`find_adapter_path` for tests. `app:cli` is the
-`shadowtrace` console script. `app.main()` connects to the **system** D-Bus, resolves the
-adapter (`find_adapter_path(objects, BT_ADAPTER)`), powers it on, then dispatches to
-`watch_loop` or `presence_loop` by `MODE`.
+`main.go` → `cmd.Execute()`. Packages:
 
-**Shared BLE core**: both modes call `scan_ble(bus, adapter_path)`, which runs one discovery
-window (`_run_discovery_window`, with `SetDiscoveryFilter` Transport + `DuplicateData=True`,
-kept continuously discovering when `CONTINUOUS_DISCOVERY=1`) and then reads
-`GetManagedObjects`, returning a raw observation per device that reported RSSI this window or
-is `Connected`: `{mac, name, type, rssi, connected, company, uuids}`. `_val()` unwraps
-dbus_next `Variant`s everywhere; D-Bus interfaces are fetched via `_get_interface_any` cast to
-`Any` to keep type checkers quiet about dynamic `call_*` methods.
+- **cmd/** — Cobra tree. `root.go` declares every persistent flag, binds each to a
+  Viper key **and** to its legacy env var (`WATCH_RSSI_MIN`, `BT_ADAPTER`, …) via
+  `BindEnv`, so `~/.config/shadowtrace.env` keeps working unchanged. Precedence:
+  flag > env > default. Subcommands: `watch`, `presence`, `scan` (one-shot, read-only
+  environment dump — great for discovery/calibration), `baseline` (list/show/forget),
+  `events` (tail/stats), `anomaly` (score/train), `oui` (update/info/lookup),
+  `version`, plus Cobra `completion`.
+- **internal/config** — `Config` struct + `Load(*viper.Viper)`. Flag keys are the
+  `Key*` constants; `~`-expansion and list parsing live here.
+- **internal/model** — shared types: `Observation` (one device this window, optional
+  fields as pointers) and `Identity` (vendor/kind/model/note).
+- **internal/scan** — `bluetooth.go` drives BlueZ over `godbus/dbus/v5`
+  (SetDiscoveryFilter + StartDiscovery + GetManagedObjects), `variants.go` unwraps
+  D-Bus variants (RSSI int16, ManufacturerData a{qv}, ServiceData a{sv}, …),
+  `net.go` runs the Wi-Fi/mDNS/ARP transports via `os/exec`.
+- **internal/identify** — `Fingerprint` (MAC-rotation-resistant key: non-MAC name +
+  company id + union of UUIDs/ServiceData UUIDs; else `mac:<addr>`) and `Identify`
+  (vendor via SIG company id / OUI, kind via icon/appearance, model via Fast Pair id,
+  Apple continuity type, or a printable string embedded in service data).
+- **internal/store** — atomic JSON persistence: `Baseline` (`_meta` + fingerprint
+  entries, hand-editable), the JSONL `Event` log (appear/leave), presence `State`.
+- **internal/oui** — MAC→vendor database (Wireshark `manuf`), with `EnsureFresh`
+  (download when missing/stale/forced, non-fatal on failure) and a nil-safe `Vendor`
+  lookup. Injected into `identify.Identify` as a `VendorFunc` so identify stays pure.
+- **internal/engine** — `Watch` (proximity threshold + `ConfirmHits` hysteresis +
+  learning window + cooldown + night hours; writes appear/leave; alerts unknowns) and
+  `Presence`. Both consume `scan.Scanner` and a `notify.Notifier`. `Watch` keeps a
+  `macFP` anchor: a device's fingerprint is fixed for its session (BlueZ enriches a
+  device's props over cycles, which would otherwise drift the fingerprint and double-
+  count one device); MAC rotation still produces a fresh fingerprint for regrouping.
+- **internal/notify** — Telegram (net/http) + stdout.
+- **internal/anomaly** — Isolation Forest **inference** in Go from a JSON model.
 
-**Watch mode** (`watch_loop`):
-- **Fingerprint** (`device_fingerprint`): a MAC-rotation-resistant identity built from
-  `name` + manufacturer `company` id + sorted service `UUIDs`; falls back to `mac:<addr>` when
-  the device exposes none. Advertised names that are *themselves* a MAC (`_looks_like_mac`,
-  e.g. `24-EB-90-...`) are dropped from the fingerprint because they rotate with the MAC.
-- **Baseline** (`~/.shadowtrace_baseline.json`, `load/save_baseline`): a learned, hand-editable
-  allowlist keyed by fingerprint. During the learning window (`WATCH_LEARN_SECONDS`, persisted
-  as `_meta.learn_until`) every strong device is learned and nothing alerts. `HOME_MACS` is an
-  always-known allowlist for fixed-MAC devices. Disk writes happen **only on structural change**
-  (new fingerprint or newly-seen MAC), not on every `last_seen`/`count` refresh — SD-friendly.
-- **Proximity + hysteresis**: only sightings with `rssi >= WATCH_RSSI_MIN` (or
-  `WATCH_RSSI_MIN_NIGHT` during `ALERT_HOURS`) count as near. A per-fingerprint track must reach
-  `WATCH_CONFIRM_HITS` consecutive strong windows before it's "present" (filters passers-by); a
-  present device is closed out after `WATCH_GONE_AFTER_SECONDS` of no strong sighting.
-- **Alerts + forensics**: an unknown, confirmed, post-learning device triggers a Telegram alert
-  (throttled by `ALERT_COOLDOWN_SECONDS`). Every appear/leave is appended to `EVENT_LOG`
-  (`~/.shadowtrace_events.jsonl`, one JSON object per line) with timestamps, RSSI min/max and
-  session duration. **This log is deliberately shaped as a dataset** for future offline anomaly
-  detection (see below).
+### Hybrid ML
 
-**Presence mode** (`presence_loop`): filters `scan_ble` output by `NAME_WHITELIST`/`IGNORE_MACS`,
-merges `wifi_scan_once` (ICMP + mDNS) and `arp_scan_once` into one `seen_now` map keyed by
-`mac`/`wifi:`/`mdns:`/`arp:`, diffs against the persisted `state`, and emits DETECTED/LOST vs
-`GONE_AFTER`. State persists to `STATE_FILE` (atomic `.tmp` + `os.replace`), written only on
-status transitions.
+Training is Python, inference is Go. `tools/train.py` (run via `uv run tools/train.py`
+— PEP 723 header auto-installs scikit-learn/numpy, no pyproject needed) fits a
+`StandardScaler + IsolationForest` over the event log and exports the tree ensemble
++ scaler + offset to JSON. `internal/anomaly/forest.go` loads that JSON and
+reproduces sklearn's `decision_function` (path-length scoring). The feature vector
+`[hour_sin, hour_cos, dow_sin, dow_cos, rssi, known]` and the Monday=0 weekday
+convention **must stay identical** between `tools/train.py` and `forest.go`, or scores
+diverge. `shadowtrace anomaly score` is Go inference; `anomaly train` shells out to the
+Python trainer.
 
-**Alerts are non-blocking**: `notify()` prints and sends Telegram via `asyncio.to_thread` so the
-blocking `requests` call never stalls the scan loop. Timestamps are timezone-aware UTC
-(`now_utc`); `_parse_dt` normalizes persisted ISO strings back to aware datetimes.
+## Testing
 
-## Testing notes
-
-Tests **stub `dbus_next`, `dotenv`, and `requests` in `sys.modules`** before importing `main`
-(see `import_main_with_stubs` in `tests/test_find_adapter.py`) so the suite runs with no
-Bluetooth stack or D-Bus. Reuse that helper; access package internals via `main.app.<name>`
-(e.g. `main.app.device_fingerprint`). `tests/__init__.py` must exist for the relative imports to
-resolve. pytest uses `asyncio_mode = auto` (`pytest.ini`), so `async def test_*` needs no marker.
-Prefer testing pure helpers (fingerprint, adapter selection, state transitions) over the
-D-Bus/subprocess edges.
+`go test ./...`. Pure-logic tests only (no D-Bus/subprocess): `identify` (fingerprint
+stability, identification), `scan` (`findAdapterPath`), `anomaly` (path-length math
+against the sklearn formula, weekday encoding), `config` (Load/fallbacks). Keep the
+D-Bus and exec edges thin and untested; test the pure functions they feed.
 
 ## Conventions
 
-- 4-space indent, line length ~100, ruff for lint/format. `snake_case` functions/modules,
-  `UPPER_SNAKE` for module-level config constants.
-- Keep I/O at the edges: isolate BlueZ/D-Bus and subprocess calls; keep diffing/parsing pure and
-  testable. New transports follow the pattern — an async `*_scan_once` returning
-  `{key: {name, rssi, type}}`, gated by an env flag, failing soft when tooling is absent.
-- CI (`.github/workflows/ci.yml`) runs the suite via `uv` on pushes/PRs to `main`/`master`.
+- Standard Go layout; `internal/` for non-exported packages. `gofmt`, `go vet` clean.
+- Keep I/O at the edges (BlueZ/D-Bus, os/exec, net/http); keep fingerprint/identify/
+  anomaly pure and tested.
+- Every new command needs a Long description + Example (self-documenting is a
+  first-class requirement here).
+- Config: add a flag in `cmd/root.go` (flag + `BindPFlag` + `BindEnv` legacy name),
+  a `Key*` const and a field in `internal/config`.
+- CI (`.github/workflows/ci.yml`) — update to Go (`go test ./...`) if still Python.
 
-## Roadmap / notes
+## Roadmap
 
-- **Wi-Fi monitor-mode sniffing** (probe requests) to detect nearby phones not on the LAN —
-  needs a monitor-capable USB Wi-Fi adapter; not yet implemented.
-- **Offline anomaly detection** over `EVENT_LOG` (see the ML discussion): the intended next step
-  is unsupervised novelty detection (e.g. sklearn `IsolationForest`/`LocalOutlierFactor`) on
-  temporal features (hour-of-day, weekday, RSSI, dwell time, concurrent-unknown count) to flag
-  "known device at an odd hour" — not deep learning or RL, which don't fit the data volume/shape.
+- Wi-Fi monitor-mode sniffing (probe requests) to detect nearby phones not on the LAN
+  — needs a monitor-capable USB adapter; not yet implemented.
+- Optional active GATT enrichment (Device Information Service) for fixed-MAC devices.

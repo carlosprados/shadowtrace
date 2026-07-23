@@ -1,5 +1,5 @@
 [Unit]
-Description=ShadowTrace (Bluetooth proximity watcher via BlueZ D-Bus -> Telegram)
+Description=ShadowTrace (BLE/Wi-Fi environment IDS -> Telegram)
 After=bluetooth.service dbus.service network-online.target
 Documentation=https://github.com/carlosprados/shadowtrace
 
@@ -7,12 +7,12 @@ Documentation=https://github.com/carlosprados/shadowtrace
 Type=simple
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-%h/.config/shadowtrace.env
-# Adjust WorkingDirectory to the project location
+# Adjust these to where you cloned the repo and built the binary (`just build`).
 WorkingDirectory=%h/shadowtrace
-ExecStart=%h/shadowtrace/.venv/bin/shadowtrace
+ExecStart=%h/shadowtrace/shadowtrace watch
 Restart=always
 RestartSec=5
-# If your user is in the 'bluetooth' group this is not needed; otherwise uncomment:
+# If your user is not in the 'bluetooth' group, uncomment:
 # SupplementaryGroups=bluetooth
 
 [Install]

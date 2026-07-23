@@ -1,13 +1,14 @@
-# Python-generated files
+# Go build output
+/shadowtrace
+*.test
+
+# Python (anomaly trainer runs via `uv run` with ephemeral deps)
 __pycache__/
 *.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
 .venv
 
-# Other
+# Local config / secrets
 .env
+
+# State/data files
+*.tmp
