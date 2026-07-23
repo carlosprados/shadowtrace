@@ -45,7 +45,7 @@ exec "$SHELL" -l  # reload PATH so ~/.local/bin is active
 
 ## Setup & Run (uv)
 ```bash
-uv sync --group dev
+uv sync --extra dev
 export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
 uv run shadowtrace
 ```
@@ -55,35 +55,31 @@ Note: Press Ctrl+C to stop.
 ## How To Use
 - Local run (CLI):
   - Copy env template: `cp .env.example .env` and fill values (or export vars in your shell).
-  - Install deps: `uv sync` (add `--group dev` for tests).
+  - Install deps: `uv sync` (add `--extra dev` for tests).
   - Start: `uv run shadowtrace` or `uv run python main.py`.
 
 - As a user systemd service:
   - Create an env file: `mkdir -p ~/.config && cp .env.example ~/.config/shadowtrace.env` and edit values.
-  - Install and enable via Makefile: `make service-install`.
-  - Restart service after changes: `make service-restart`.
-  - Uninstall service: `make service-uninstall`.
+  - Install and enable: `just service-install`.
+  - Restart service after changes: `just service-restart`.
+  - Uninstall service: `just service-uninstall`.
   - Alternatively (manual):
     - `mkdir -p ~/.config/systemd/user && cp shadowtrace.service ~/.config/systemd/user/`
     - `systemctl --user daemon-reload && systemctl --user enable --now shadowtrace`
   - Note: if your project path is not `~/shadowtrace`, update `WorkingDirectory` in the unit before installing.
   - Logs: `journalctl --user -u shadowtrace -f`.
 
-## Makefile Targets
-- `make sync`: install runtime deps into `.venv` via uv
-- `make dev`: install dev deps (pytest, etc.)
-- `make run`: run the app (`uv run python main.py`)
-- `make test`: run tests (`uv run pytest`)
-- `make add PKG=x`: add a dependency (records in `pyproject.toml`)
-- `make format`: format code with Ruff (`uv run ruff format .`)
-- `make lint`: lint with Ruff (`uv run ruff check .`)
-- `make lint-fix`: lint with auto-fix (`uv run ruff check --fix .`)
-- `make service-install`: install + enable the user systemd unit
-- `make service-restart`: restart the user unit
-- `make service-uninstall`: disable and remove the unit
-- `make service-status`: show the unit status
-- `make service-logs`: show the last 200 log lines
-- `make service-logs-follow`: follow unit logs in real time
+## Tasks (just)
+Tasks are defined in the `Justfile` (install [just](https://github.com/casey/just)). Run `just`
+with no args to list them.
+- `just sync` / `just dev`: install runtime / runtime+dev deps
+- `just run`: run the app
+- `just test`: run tests
+- `just watch-test`: quick foreground watch-mode smoke test
+- `just add <pkg>`: add a dependency (e.g. `just add requests`)
+- `just format` / `just lint` / `just lint-fix`: ruff format / check / autofix
+- `just service-install` / `service-restart` / `service-uninstall` / `service-status`: manage the unit
+- `just service-logs` / `service-logs-follow`: show / follow unit logs
 
 ## Watch mode configuration (env vars)
 - `MODE`: `watch` (default) or `presence`
@@ -98,6 +94,18 @@ Note: Press Ctrl+C to stop.
 - `HOME_MACS`: comma-separated MACs always treated as known (fixed-MAC devices)
 - `BASELINE_FILE` (default `~/.shadowtrace_baseline.json`): learned, hand-editable allowlist
 - `EVENT_LOG` (default `~/.shadowtrace_events.jsonl`): forensic log (one JSON object per line)
+
+### Quick test
+
+Use the helper script (writes throwaway files under `/tmp`, alerts to stdout):
+
+```bash
+just watch-test               # learns 5s, then alerts on nearby devices; Ctrl+C to stop
+# or with overrides:
+BT_ADAPTER=hci0 WATCH_LEARN_SECONDS=60 ./scripts/watch-test.sh
+```
+
+Every knob is overridable from the environment; run `./scripts/watch-test.sh -h` for the header.
 
 ### Calibrating watch mode
 1. Run it for `WATCH_LEARN_SECONDS` (default 24h) so it learns everything habitual as known.
